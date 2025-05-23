@@ -1,31 +1,58 @@
 import "reflect-metadata";
 import { DataSource } from "typeorm";
-import dotenv from "dotenv";
+import { User } from "../entity/user-entity.js";
+import { Software } from "../entity/software-entity.js";
+import { Request } from "../entity/request-entity.js";
+import { RequestHistory } from "../entity/request-history-entity.js";
 
-dotenv.config();
+const isProd = process.env.NODE_ENV === "production";
 
-// Helper to ensure required env variables are set
-function getEnvVariable(key: string): string {
-  const value = process.env[key];
-  if (!value) {
-    console.error(`Envioronment variable ${key} is not set`);
-    throw new Error(`Missing environment variable: ${key}`);
+// Production uses DATABASE_URL, local uses individual connection parameters
+const getConnectionOptions = () => {
+  if (isProd && process.env.DATABASE_URL) {
+    return {
+      type: "postgres",
+      url: process.env.DATABASE_URL,
+      ssl: { rejectUnauthorized: false }
+    };
   }
-  return value;
-}
 
-const AppDataSource = new DataSource({
-  type: "postgres",
-  host: getEnvVariable("DATABASE_HOST"),
-  port: parseInt(getEnvVariable("DATABASE_PORT")),
-  username: getEnvVariable("DATABASE_USERNAME"),
-  password: getEnvVariable("DATABASE_PASSWORD"),
-  database: getEnvVariable("DATABASE_NAME"),
-  synchronize: true,
-  logging: false,
-  entities: ["src/entity/*.ts"],
-  migrations: ["src/migration/*.js"],
-  subscribers: [],
-});
+  // Local Docker configuration
+  return {
+    type: "postgres",
+    host: process.env.DATABASE_HOST || "localhost",
+    port: parseInt(process.env.DATABASE_PORT || "5432"),
+    username: process.env.DATABASE_USERNAME || "postgres",
+    password: process.env.DATABASE_PASSWORD || "postgres",
+    database: process.env.DATABASE_NAME || "user_access_db"
+  };
+};
 
-export { AppDataSource };
+export const AppDataSource = new DataSource({
+  ...getConnectionOptions(),
+  synchronize: false, // Keep this false for production
+  logging: !isProd,
+  entities: [User, Software, Request, RequestHistory],
+  migrations: ["dist/database/migrations/*.js"],
+  subscribers: []
+} as any);
+
+// Initialize the data source
+export const initializeDataSource = async () => {
+  try {
+    if (!AppDataSource.isInitialized) {
+      await AppDataSource.initialize();
+      console.log("Data Source has been initialized!");
+      
+      // Run migrations in production
+      if (isProd) {
+        console.log("Running migrations...");
+        await AppDataSource.runMigrations();
+        console.log("Migrations completed!");
+      }
+    }
+  } catch (error) {
+    console.error("Error during Data Source initialization:", error);
+    throw error;
+  }
+};
